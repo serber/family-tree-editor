@@ -1,0 +1,66 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { expect, test } from '@playwright/test'
+
+const fixturePath = fileURLToPath(new URL('./fixtures/family-7.ged', import.meta.url))
+const original = readFileSync(fixturePath, 'utf8')
+
+test('imports a GEDCOM, edits one person, reloads, and exports only the intended change', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
+  await page.getByTestId('gedcom-input').setInputFiles(fixturePath)
+  await expect(page.getByRole('button', { name: 'Сохранить GEDCOM' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
+  await page.getByRole('button', { name: 'К первой карточке' }).click()
+  const panel = page.getByRole('complementary', { name: 'Карточка человека' })
+  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Иван')
+  await panel.getByLabel('Имя', { exact: true }).fill('Альберт')
+  await panel.getByRole('button', { name: 'Применить изменения' }).click()
+  await expect(page.getByTestId('save-status')).toContainText('Сохранено')
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Сохранить GEDCOM' })).toBeVisible()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Сохранить GEDCOM' }).click()
+  const download = await downloadPromise
+  const path = await download.path()
+  const expected = original.replace('1 NAME Иван /Леснов/', '1 NAME Альберт /Леснов/').replace('2 GIVN Иван', '2 GIVN Альберт')
+  expect(readFileSync(path!, 'utf8')).toBe(expected)
+  await page.getByTestId('gedcom-input').setInputFiles({ name: download.suggestedFilename(), mimeType: 'text/plain', buffer: Buffer.from(expected) })
+  await expect(page.getByRole('button', { name: 'К первой карточке' })).toBeEnabled()
+  await page.getByRole('button', { name: 'К первой карточке' }).click()
+  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Альберт')
+  await expect(page.locator('.canvas-controls')).toContainText('100%')
+  await page.screenshot({ path: 'test-results/gedcom-editor.png' })
+  expect(errors).toEqual([])
+})
+
+test('leaves the current document untouched when import is invalid or cancelled', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
+  await page.getByTestId('gedcom-input').setInputFiles({ name: 'broken.ged', mimeType: 'text/plain', buffer: Buffer.from('Not a GEDCOM') })
+  await expect(page.getByRole('alert')).toContainText('не удалось прочитать')
+  await expect(page.locator('.toolbar-title')).toContainText('Семья Лесновых')
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await page.getByTestId('gedcom-input').setInputFiles(fixturePath)
+  await expect(page.locator('.file-operation')).toHaveCount(0)
+  await expect(page.locator('.toolbar-title')).toContainText('Семья Лесновых')
+  await expect(page.getByRole('button', { name: 'Сохранить GEDCOM' })).toHaveCount(0)
+})
+
+test('reports unresolved links while preserving them in an unchanged export', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
+  const input = original.replace('1 CHIL @I3@', '1 CHIL @MISSING@')
+  await page.getByTestId('gedcom-input').setInputFiles({ name: 'warnings.ged', mimeType: 'text/plain', buffer: Buffer.from(input) })
+  await expect(page.locator('.import-warnings')).toContainText('Замечания к исходному GEDCOM')
+  await page.locator('.import-warnings summary').click()
+  await expect(page.locator('.import-warnings')).toContainText('@MISSING@')
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Сохранить GEDCOM' }).click()
+  const path = await (await downloadPromise).path()
+  expect(readFileSync(path!, 'utf8')).toBe(input)
+})

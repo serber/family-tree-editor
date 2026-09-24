@@ -188,7 +188,7 @@ describe('structural GEDCOM export', () => {
     tree = updatePerson(result.tree, result.personId!, { givenName: 'Иван' })
     tree = updateFamily(tree, result.familyId!, { marriageDate: '12 MAR 1921', marriagePlace: 'Москва' })
     result = addChild(tree, anna, 'M')
-    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Иванов', patronymic: 'Иванович' })
+    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Иванов', patronymic: '' })
     const output = exportGedcom(result.tree)
     expect(output).toContain('0 @I1@ INDI\n1 NAME Анна Петровна /Иванова/\n2 GIVN Анна Петровна\n2 SURN Иванова\n1 NAME Анна Петровна /Соколова/\n2 TYPE birth\n2 SURN Соколова\n1 SEX F\n1 BIRT\n2 DATE ABT 1900\n2 PLAC Тверь\n1 FAMC @F1@\n1 FAMS @F2@\n')
     expect(output).toContain('0 @F2@ FAM\n1 HUSB @I3@\n1 WIFE @I1@\n1 CHIL @I4@\n1 MARR\n2 DATE 12 MAR 1921\n2 PLAC Москва\n0 TRLR\n')

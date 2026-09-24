@@ -41,7 +41,7 @@ Export diffs the document against a re-import of `tree.gedcom.text` and patches 
 - **Graph, not tree.** A person can be in several families; shared ancestors and repeated marriages are valid. Ancestry cycles are rejected on import and by every linking operation.
 - **Model ≠ renderer.** People/families never hold coordinates or React Flow objects. Positions come from the layout Worker.
 - **One canvas, automatic layout.** Every person is reachable without collapsing branches. There is no manual card dragging; spouses are always adjacent (couple blocks).
-- **Workers.** GEDCOM parsing/export and layout run in Web Workers. Layout depends only on the structure key (person IDs + family links), never on names, dates, places, or titles.
+- **Workers.** GEDCOM parsing/export and layout run in Web Workers. Layout depends only on the structure key (person IDs + family links + the marriage order of people married more than once, which `orderUnions` derives from marriage years), never on names, places, titles, or any other date.
 - **GEDCOM preservation.** Keep unknown tags and unrelated records. Unchanged input must export byte-identical, and only changed relationships are reconciled. Before changing GEDCOM behavior, read `docs/GEDCOM_SUPPORT.md`, add a fixture, and add an exact-output test. Never call export "lossless" beyond what fixtures prove.
 - **Review marks stay out of GEDCOM.** `TreeDocument.verified` lives in the draft, snapshots, and JSON backups only; it must not affect export or layout.
 - **IDs never reused.** Allocate new IDs only through `idAllocator` (document counters), never from the current key set.
@@ -53,7 +53,7 @@ Export diffs the document against a re-import of `tree.gedcom.text` and patches 
 - UI text in Russian; code, comments, docs, and commit messages in English.
 - Code is fairly dense (long single-line JSX and expressions). Match nearby style, but keep new logic readable.
 - Model operations throw Russian `Error` messages; the UI shows them in a toast. Reversible destructive actions (delete, unlink, merge) use an undo toast instead of a confirmation.
-- Name suggestions (patronymic, surname forms) are prefilled but always editable; never overwrite a value the user typed.
+- Surname forms (and a father's given name guessed from the child's patronymic) are prefilled but always editable; never overwrite a value the user typed. Patronymics are never prefilled — the person panel only offers the father-based one as a click-to-apply suggestion.
 - The user stays in control of navigation: an action such as marking a person as checked must not move the selection by itself. Offer navigation as a separate explicit button. (Selecting a newly created relative is the one exception — it is the target of the action.)
 
 ## Workflow

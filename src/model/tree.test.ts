@@ -3,7 +3,7 @@ import { createDemo } from './demo'
 import { editorReducer, initialEditorState } from './history'
 import { findIssues } from './issues'
 import { addChild, addParent, addPartner, addPerson, addSibling, deletePerson, mergePeople, nextUnverified, setVerified, linkChild, linkParent, linkPartner, linkSibling, unlinkParent, unlinkPartner, updatePerson } from './ops'
-import { buildIndex, isTreeDocument, lineageOf, migrateDocument, parentageLabel, relativesOf, searchPeople, type TreeDocument } from './tree'
+import { buildIndex, emptyFamily, isTreeDocument, lineageOf, migrateDocument, orderUnions, parentageLabel, relativesOf, searchPeople, type TreeDocument } from './tree'
 import { createSkeleton } from '../gedcom/skeleton'
 
 function emptyTree(): TreeDocument {
@@ -62,12 +62,12 @@ describe('structural operations', () => {
     expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Орлова', sex: 'F' })
     expect(() => addParent(result.tree, maria, 'M')).toThrow('оба родителя')
     result = addSibling(result.tree, maria, 'M')
-    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Орлов', patronymic: 'Николаевич' })
+    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Орлов', patronymic: '' })
     result = addPartner(result.tree, maria)
     expect(result.tree.people[result.personId!]).toMatchObject({ sex: 'M', surname: 'Орлов' })
     const husband = result.personId!
     result = addChild(updatePerson(result.tree, husband, { givenName: 'Сергей', surname: 'Белов' }), maria, 'F')
-    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Белова', patronymic: 'Сергеевна' })
+    expect(result.tree.people[result.personId!]).toMatchObject({ surname: 'Белова', patronymic: '' })
     expect(relativesOf(result.tree, maria).children).toEqual([result.personId])
     expect(isTreeDocument(result.tree)).toBe(true)
   })
@@ -237,4 +237,10 @@ describe('stored document migration', () => {
     expect(isTreeDocument(tree)).toBe(true)
     expect(migrateDocument({ schemaVersion: 1, people: [], families: [] }, createSkeleton)).toBeUndefined()
   })
+})
+
+it('orders a person\'s marriages by year and keeps undated ones in their recorded place', () => {
+  const families = [emptyFamily('F1', { marriageDate: '1910' }), emptyFamily('F2'), emptyFamily('F3', { marriageDate: 'ABT 1895' }), emptyFamily('F4', { marriageDate: '1900' })]
+  expect(orderUnions(families).map((family) => family.id)).toEqual(['F3', 'F2', 'F4', 'F1'])
+  expect(orderUnions([emptyFamily('F1'), emptyFamily('F2')]).map((family) => family.id)).toEqual(['F1', 'F2'])
 })

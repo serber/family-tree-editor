@@ -14,7 +14,7 @@ import {
   addChild, addParent, addPartner, addPerson, addSibling, childFamilyOptions, deletePerson, isSelfOrDescendant,
   linkChild, linkParent, linkPartner, linkSibling, mergePeople, nextUnverified, setVerified, unlinkParent, unlinkPartner, unlinkSibling, updateFamily, updatePerson, type OpResult,
 } from './model/ops'
-import { buildIndex, fullName, lifespan, lineageOf, relativesOf, shortName, type Person, type PersonFields, type TreeDocument } from './model/tree'
+import { buildIndex, fullName, lifespan, lineageOf, marriageOrders, relativesOf, shortName, type Person, type PersonFields, type TreeDocument } from './model/tree'
 import { layoutInput } from './layout/layout'
 import { createSkeleton } from './gedcom/skeleton'
 import { readGedcom, writeGedcom } from './gedcom/client'
@@ -121,7 +121,9 @@ function Editor({ start }: { start: Start }) {
   // --- Layout: only structure (IDs and links) triggers a relayout, never text edits.
   const peopleKey = useMemo(() => Object.keys(tree.people).join(','), [tree.people])
   const familiesKey = useMemo(() => Object.values(tree.families).map((family) => `${family.id}:${family.partnerIds.join('+')}>${family.childIds.join('+')}`).join(';'), [tree.families])
-  const structureKey = `${tree.id}|${peopleKey}|${familiesKey}`
+  // Marriage order (by marriage year) of people married more than once decides which spouse is drawn first.
+  const marriageKey = useMemo(() => JSON.stringify(marriageOrders(tree.families)), [tree.families])
+  const structureKey = `${tree.id}|${peopleKey}|${familiesKey}|${marriageKey}`
   const input = useMemo(() => layoutInput(tree), [structureKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const layout = useLayout(input, structureKey, tree.id, layoutAttempt)
   const layoutValid = layout.docId === tree.id
@@ -529,7 +531,7 @@ function Editor({ start }: { start: Start }) {
           {layout.busy && layoutValid && <div className="layout-busy"><LoaderCircle className="spin" size={14} />Перестраиваем дерево…</div>}
           {!layoutValid && Object.keys(tree.people).length > 0 && <div className="canvas-loading"><div>{layout.error ? <><strong>Не удалось построить дерево</strong><span>{layout.error}</span><button className="btn btn-primary" onClick={() => setLayoutAttempt((value) => value + 1)}>Повторить</button></> : <><LoaderCircle className="spin" size={26} /><strong>Размещаем {Object.keys(tree.people).length.toLocaleString('ru')} чел.</strong></>}</div></div>}
           <TreeCanvas tree={tree} positions={layoutValid ? layout.positions : {}} selectedId={selectedId} lineage={lineage} newIds={newIds} command={command}
-            onSelect={(id) => select(id, { reveal: false })} onAction={(action, id) => void addRelative(action, id)} onOpen={(id) => setFocusRequest({ id, nonce: next() })}
+            onSelect={(id) => { select(id, { reveal: false }); if (id && !tree.people[id]?.givenName.trim()) setFocusRequest({ id, nonce: next() }) }} onAction={(action, id) => void addRelative(action, id)} onOpen={(id) => setFocusRequest({ id, nonce: next() })}
             onAddFirst={addFirst} layoutMs={layoutValid ? layout.durationMs : undefined} highlight={highlight} onToggleHighlight={() => setHighlight((value) => !value)} visible={view === 'tree'} review={reviewMode ? marks : null} />
         </div>
         {view === 'table' && <PeopleTable tree={deferredTree} index={deferredIndex} review={reviewMode ? deferredTree.verified ?? NO_MARKS : null} selectedId={selectedId} onSelect={(id) => select(id, { reveal: false })} onOpen={openInTree} />}

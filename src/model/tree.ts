@@ -124,9 +124,27 @@ export interface Relatives {
   partnerFamilies: Family[]
 }
 
+/** A person's unions in marriage order: dated marriages by year; undated ones keep their recorded position. */
+export function orderUnions(families: Family[]): Family[] {
+  const dated = families.map((family, slot) => ({ family, slot, year: yearOf(family.marriageDate) })).filter((entry) => entry.year !== undefined)
+  const byYear = [...dated].sort((a, b) => a.year! - b.year!)
+  const result = [...families]
+  dated.forEach((entry, index) => { result[entry.slot] = byYear[index].family })
+  return result
+}
+
+/** Marriage order of every person with more than one union (family IDs), for the layout. */
+export function marriageOrders(families: Record<string, Family>): Record<string, string[]> {
+  const unions = new Map<string, Family[]>()
+  for (const family of Object.values(families)) for (const id of family.partnerIds) unions.set(id, [...(unions.get(id) ?? []), family])
+  const result: Record<string, string[]> = {}
+  for (const [id, list] of unions) if (list.length > 1) result[id] = orderUnions(list).map((family) => family.id)
+  return result
+}
+
 export function relativesOf(tree: TreeDocument, personId: string, index = buildIndex(tree)): Relatives {
   const parentFamilies = (index.asChild.get(personId) ?? []).map((id) => tree.families[id])
-  const partnerFamilies = (index.asPartner.get(personId) ?? []).map((id) => tree.families[id])
+  const partnerFamilies = orderUnions((index.asPartner.get(personId) ?? []).map((id) => tree.families[id]))
   const unique = (ids: string[]) => [...new Set(ids)].filter((id) => id !== personId)
   return {
     parents: unique(parentFamilies.flatMap((family) => family.partnerIds)),

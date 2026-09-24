@@ -1,4 +1,4 @@
-import { patronymicForSex, patronymicFrom, fatherNameFromPatronymic, surnameForSex } from './names'
+import { fatherNameFromPatronymic, surnameForSex } from './names'
 import { buildIndex, emptyFamily, emptyPerson, relativesOf, type Family, type FamilyFields, type Person, type PersonFields, type Sex, type TreeDocument } from './tree'
 
 // Pure structural edits. Each returns a new document and never mutates its input.
@@ -145,7 +145,7 @@ export function addChild(tree: TreeDocument, parentId: string, sex: Sex, familyI
   const father = fatherOf(tree, family)
   const surnameSource = (father ?? tree.people[parentId]).surname
   const id = ids.person()
-  const child = emptyPerson(id, { sex, surname: surnameForSex(surnameSource, sex), patronymic: father ? patronymicFrom(father.givenName, sex) : '' })
+  const child = emptyPerson(id, { sex, surname: surnameForSex(surnameSource, sex) })
   const updated = { ...family, childIds: [...family.childIds, id] }
   return { tree: { ...tree, nextIds: ids.counters(), people: withPeople(tree, [child]), families: withFamilies(tree, [updated]) }, personId: id, familyId: updated.id }
 }
@@ -160,8 +160,7 @@ export function addSibling(tree: TreeDocument, personId: string, sex: Sex): OpRe
   const father = fatherOf(tree, existing)
   const id = ids.person()
   const surname = father ? surnameForSex(father.surname, sex) : surnameForSex(person.birthSurname || person.surname, sex)
-  const patronymic = father ? patronymicFrom(father.givenName, sex) : patronymicForSex(person.patronymic, sex)
-  const sibling = emptyPerson(id, { sex, surname, patronymic })
+  const sibling = emptyPerson(id, { sex, surname })
   const updated = { ...family, childIds: [...family.childIds, id] }
   return { tree: { ...tree, nextIds: ids.counters(), people: withPeople(tree, [sibling]), families: withFamilies(tree, [updated]) }, personId: id, familyId: updated.id }
 }

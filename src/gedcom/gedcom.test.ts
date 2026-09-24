@@ -116,6 +116,32 @@ describe('source-preserving GEDCOM', () => {
     expect(() => exportGedcom(tree)).toThrow('семейных связей')
   })
 
+  it('replaces a structured given name only as a whole word in NAME', () => {
+    const text = fixture7.replace('1 NAME Анна /Волкова/', '1 NAME Аннабелла Анна /Волкова/\n2 GIVN Анна')
+    const tree = importGedcomText(text)
+    tree.people.I2.givenName = 'Мария'
+    expect(exportGedcom(tree)).toBe(text.replace('1 NAME Аннабелла Анна /Волкова/\n2 GIVN Анна', '1 NAME Аннабелла Мария /Волкова/\n2 GIVN Мария'))
+  })
+
+  it('refuses to rewrite a name when GIVN matches only part of a word or is ambiguous', () => {
+    const partial = importGedcomText(fixture551.replace('2 GIVN John', '2 GIVN Jo'))
+    partial.people.I1.givenName = 'Albert'
+    expect(() => exportGedcom(partial)).toThrow('расходятся')
+    const ambiguous = importGedcomText(fixture551.replace('1 NAME Dr. John /Doe/ Jr.', '1 NAME John John /Doe/ Jr.'))
+    ambiguous.people.I1.givenName = 'Albert'
+    expect(() => exportGedcom(ambiguous)).toThrow('расходятся')
+  })
+
+  it('never splits a 5.5.1 @@ escape or breaks next to a space in CONC lines', () => {
+    const block = fixture551.slice(fixture551.indexOf('1 NOTE First line'), fixture551.indexOf('2 SOUR @S1@\n1 FAMS'))
+    const tree = importGedcomText(fixture551)
+    tree.people.I1.note = 'x'.repeat(234) + '@y'
+    expect(exportGedcom(tree)).toBe(fixture551.replace(block, `1 NOTE ${'x'.repeat(234)}\n2 CONC @@y\n`))
+    tree.people.I1.note = 'a'.repeat(234) + ' bc'
+    expect(exportGedcom(tree)).toBe(fixture551.replace(block, `1 NOTE ${'a'.repeat(233)}\n2 CONC a bc\n`))
+    expect(importGedcomText(exportGedcom(tree)).people.I1.note).toBe('a'.repeat(234) + ' bc')
+  })
+
   it('refuses to rewrite inconsistent structured names instead of damaging their prefixes', () => {
     const tree = importGedcomText(fixture551.replace('2 GIVN John', '2 GIVN Unrelated'))
     tree.people.I1.givenName = 'Changed'

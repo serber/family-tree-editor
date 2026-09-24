@@ -5,19 +5,30 @@ import type { GedcomLine, ParsedGedcom } from './types'
 const editableFields = ['givenName', 'surname', 'birthDate', 'deathDate', 'note'] as const
 const encode = (value: string, version: ParsedGedcom['version']) => version === '5.5.1' ? value.replaceAll('@', '@@') : value.startsWith('@') ? '@' + value : value
 
-/** Conservative UTF-8 line budget also fits the GEDCOM 5.5.1 255-character limit. */
-function splitBytes(value: string, budget: number): string[] {
-  const result: string[] = []
-  let current = ''
-  let bytes = 0
+/**
+ * Splits unescaped GEDCOM 5.5.1 text into CONC chunks whose escaped UTF-8 size fits the budget.
+ * The conservative budget also fits the 255-character line limit. Splitting before escaping keeps
+ * each `@@` on one line; breaks avoid spaces because some readers trim them at line edges.
+ */
+function splitForConc(value: string, budget: number): string[] {
   const encoder = new TextEncoder()
+  const size = (character: string) => character === '@' ? 2 : encoder.encode(character).length
+  const result: string[] = []
+  let current: string[] = []
+  let bytes = 0
   for (const character of value) {
-    const size = encoder.encode(character).length
-    if (bytes + size > budget) { result.push(current); current = ''; bytes = 0 }
-    current += character
-    bytes += size
+    if (current.length && bytes + size(character) > budget) {
+      let cut = current.length
+      while (cut > 0 && (current[cut - 1] === ' ' || (current[cut] ?? character) === ' ')) cut--
+      if (cut === 0) cut = current.length
+      result.push(current.slice(0, cut).join(''))
+      current = current.slice(cut)
+      bytes = current.reduce((total, entry) => total + size(entry), 0)
+    }
+    current.push(character)
+    bytes += size(character)
   }
-  result.push(current)
+  result.push(current.join(''))
   return result
 }
 
@@ -27,8 +38,7 @@ function renderPayload(level: number, tag: string, value: string, version: Parse
     const lineTag = index === 0 ? tag : 'CONT'
     const lineLevel = index === 0 ? level : level + 1
     const prefix = `${lineLevel} ${lineTag}`
-    const escaped = encode(paragraph, version)
-    const chunks = version === '5.5.1' ? splitBytes(escaped, 235) : [escaped]
+    const chunks = version === '5.5.1' ? splitForConc(paragraph, 235).map((chunk) => encode(chunk, version)) : [encode(paragraph, version)]
     result.push(prefix + (chunks[0] ? ` ${chunks[0]}` : ''))
     chunks.slice(1).forEach((chunk) => result.push(`${level + 1} CONC ${chunk}`))
   })
@@ -83,8 +93,12 @@ export function exportGedcom(tree: TreeDocument): string {
     function substitute(text: string, before: string, after: string): string {
       if (before === after) return text
       if (!before) return text + after
-      if (!text.includes(before)) throw new Error(`У @${record.xref}@ поля NAME и GIVN/SURN расходятся. Сначала исправьте их в исходной программе.`)
-      return text.replace(before, () => after)
+      // Match whole words only: GIVN "Jo" must not rewrite part of "John" in NAME.
+      const word = new RegExp(`(?<![\\p{L}\\p{N}])${before.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'gu')
+      const matches = [...text.matchAll(word)]
+      if (matches.length !== 1) throw new Error(`У @${record.xref}@ поля NAME и GIVN/SURN расходятся. Сначала исправьте их в исходной программе.`)
+      const index = matches[0].index
+      return text.slice(0, index) + after + text.slice(index + before.length)
     }
     const given = substitute(parts.before, original.givenName, current.givenName)
     const surname = substitute(parts.surname, original.surname, current.surname)

@@ -31,9 +31,9 @@ A small local parser is used because the immediate requirement is retaining phys
 
 Missing supported structures are inserted when a value is added. Unchanged additional names, events, notes, sources, media references, adoption metadata, and extensions stay in the source. They do not yet have full editing interfaces.
 
-GEDCOM 5.5.1 note output escapes at-signs and uses `CONT`/`CONC` with a conservative UTF-8 line budget. GEDCOM 7 output uses `CONT` and version-specific leading-at-sign escaping. Empty lines in notes are preserved.
+GEDCOM 5.5.1 note output escapes at-signs and uses `CONT`/`CONC` with a conservative UTF-8 line budget. Text is split before escaping, so `@@` never spans two lines, and `CONC` breaks avoid spaces at line edges. GEDCOM 7 output uses `CONT` and version-specific leading-at-sign escaping. Empty lines in notes are preserved.
 
-If structured name fields disagree with the display name, an unsafe name rewrite is refused. ASCII sources cannot be exported with new non-ASCII characters; the applied edit is still available in the local/JSON draft. Implicit encoding conversion is intentionally absent.
+Structured `GIVN`/`SURN` values are replaced in `NAME` only as a whole word. If they are missing from `NAME`, match only part of a word, or appear more than once, the rewrite is refused. ASCII sources cannot be exported with new non-ASCII characters; the applied edit is still available in the local/JSON draft. Implicit encoding conversion is intentionally absent.
 
 ## References and malformed data
 

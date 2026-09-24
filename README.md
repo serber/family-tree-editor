@@ -70,4 +70,4 @@ Dagre provides the initial layered layout. It does not yet guarantee genealogy-s
 
 ## Continue development
 
-Read [the continuation prompt](docs/CONTINUE_PROMPT.md), [the implementation plan](docs/PLAN.md), and [the current status](docs/STATUS.md). Repository-specific agent instructions are in [AGENTS.md](AGENTS.md).
+See [the implementation plan](docs/PLAN.md) and [the current status](docs/STATUS.md). Agent instructions are in [CLAUDE.md](CLAUDE.md); `AGENTS.md` points there.

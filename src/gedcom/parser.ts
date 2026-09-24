@@ -1,4 +1,5 @@
-import type { Family, Person, TreeDocument } from '../model/tree'
+import { splitPatronymic } from '../model/names'
+import { nextIdsFor, type Family, type Person, type TreeDocument } from '../model/tree'
 import type { GedcomLine, ParsedGedcom } from './types'
 
 export const child = (node: GedcomLine | undefined, tag: string): GedcomLine | undefined => node?.children.find((entry) => entry.tag === tag)
@@ -65,19 +66,42 @@ export function nameParts(value: string): { before: string; surname: string; aft
   return match ? { before: match[1], surname: match[2], after: match[3], hasSlashes: true } : { before: value, surname: '', after: '', hasSlashes: false }
 }
 
+/** Given-name portion and surname of a NAME structure, preferring GIVN/SURN when present. */
+export function nameFields(name: GedcomLine | undefined, version: ParsedGedcom['version']): { given: string; surname: string } {
+  const parts = nameParts(payload(name, version))
+  return {
+    given: child(name, 'GIVN') ? payload(child(name, 'GIVN'), version) : parts.before.trim(),
+    surname: child(name, 'SURN') ? payload(child(name, 'SURN'), version) : parts.surname.trim(),
+  }
+}
+
+/** The additional NAME recording a birth/maiden surname (the first NAME is the primary one). */
+export function birthNameOf(record: GedcomLine): GedcomLine | undefined {
+  return record.children.filter((entry) => entry.tag === 'NAME').slice(1).find((entry) => /^(?:birth|maiden)$/i.test(child(entry, 'TYPE')?.value ?? ''))
+}
+
+export function inlineNoteOf(record: GedcomLine): GedcomLine | undefined {
+  return record.children.find((entry) => entry.tag === 'NOTE' && !pointer(entry.value))
+}
+
 export function personFromRecord(record: GedcomLine, parsed: ParsedGedcom): Person {
-  const name = child(record, 'NAME')
-  const parts = nameParts(payload(name, parsed.version))
-  const inlineNote = record.children.find((entry) => entry.tag === 'NOTE' && !pointer(entry.value))
+  const primary = nameFields(child(record, 'NAME'), parsed.version)
+  const { givenName, patronymic } = splitPatronymic(primary.given)
   const sex = child(record, 'SEX')?.value
+  const birthName = birthNameOf(record)
+  const eventValue = (tag: string, sub: string) => payload(child(child(record, tag), sub), parsed.version)
   return {
     id: record.xref!,
-    givenName: child(name, 'GIVN') ? payload(child(name, 'GIVN'), parsed.version) : parts.before.trim(),
-    surname: child(name, 'SURN') ? payload(child(name, 'SURN'), parsed.version) : parts.surname.trim(),
-    birthDate: payload(child(child(record, 'BIRT'), 'DATE'), parsed.version),
-    deathDate: payload(child(child(record, 'DEAT'), 'DATE'), parsed.version),
-    note: payload(inlineNote, parsed.version),
+    givenName,
+    patronymic,
+    surname: primary.surname,
+    birthSurname: birthName ? nameFields(birthName, parsed.version).surname : '',
     sex: sex === 'M' || sex === 'F' ? sex : 'U',
+    birthDate: eventValue('BIRT', 'DATE'),
+    birthPlace: eventValue('BIRT', 'PLAC'),
+    deathDate: eventValue('DEAT', 'DATE'),
+    deathPlace: eventValue('DEAT', 'PLAC'),
+    note: payload(inlineNoteOf(record), parsed.version),
   }
 }
 
@@ -106,8 +130,7 @@ export function importGedcomText(text: string, fileName = 'family.ged'): TreeDoc
     if (!record.xref) throw new Error(`Строка ${record.index + 1}: у человека нет идентификатора.`)
     people[record.xref] = personFromRecord(record, parsed)
   }
-  if (!Object.keys(people).length) throw new Error('В файле нет записей людей INDI.')
-  if (Object.keys(people).length > 3000) throw new Error('В этой версии можно открыть не более 3 000 человек.')
+  if (Object.keys(people).length > 5000) throw new Error('В этой версии можно открыть не более 5 000 человек.')
   for (const line of parsed.lines) {
     const target = pointer(line.value)
     if (target && target !== 'VOID' && !parsed.recordsById.has(target)) warn(`Строка ${line.index + 1}: ссылка @${target}@ не найдена; исходная строка сохранена.`)
@@ -120,7 +143,13 @@ export function importGedcomText(text: string, fileName = 'family.ged'): TreeDoc
       warn(`Семья @${record.xref}@: связь ${entry.tag} ${entry.value} не показана; исходная строка сохранена.`)
       return []
     }))]
-    families[record.xref] = { id: record.xref, partnerIds: resolvePeople(['HUSB', 'WIFE']), childIds: resolvePeople(['CHIL']) }
+    const partnerIds = resolvePeople(['HUSB', 'WIFE'])
+    if (partnerIds.length > 2) throw new Error(`Семья @${record.xref}@: больше двух супругов (HUSB/WIFE). Такой файл пока не поддерживается.`)
+    const marriage = child(record, 'MARR')
+    families[record.xref] = {
+      id: record.xref, partnerIds, childIds: resolvePeople(['CHIL']),
+      marriageDate: payload(child(marriage, 'DATE'), parsed.version), marriagePlace: payload(child(marriage, 'PLAC'), parsed.version),
+    }
     if (people[`family:${record.xref}`]) throw new Error('Идентификатор человека конфликтует со служебным узлом семьи; этот файл пока не поддерживается.')
   }
   for (const record of parsed.records) if (record.tag === 'INDI') {
@@ -131,11 +160,12 @@ export function importGedcomText(text: string, fileName = 'family.ged'): TreeDoc
   }
   assertAcyclic(people, families)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: `gedcom-${crypto.randomUUID()}`,
     title: fileName.replace(/\.ged$/i, '') || 'Родословная',
     people, families,
     gedcom: { text, fileName, version: parsed.version, encoding: parsed.encoding, warnings },
+    nextIds: nextIdsFor(parsed.recordsById.keys()),
   }
 }
 

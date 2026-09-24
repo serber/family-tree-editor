@@ -1,4 +1,5 @@
 import type { TreeDocument } from '../model/tree'
+import { downloadFile, safeFileName } from '../storage'
 
 type Request = { operation: 'import'; bytes: ArrayBuffer; fileName: string } | { operation: 'export'; tree: TreeDocument }
 
@@ -6,13 +7,13 @@ function runWorker<T>(request: Request): Promise<T> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./gedcom.worker.ts', import.meta.url), { type: 'module' })
     const cleanup = () => { clearTimeout(timer); worker.terminate() }
-    const timer = setTimeout(() => { cleanup(); reject(new Error('Обработка GEDCOM заняла больше минуты. Текущий черновик не изменён.')) }, 60_000)
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Обработка GEDCOM заняла больше минуты. Текущее дерево не изменено.')) }, 60_000)
     worker.onmessage = (event: MessageEvent<T & { ok: boolean; error?: string }>) => {
       cleanup()
       if (event.data.ok) resolve(event.data)
       else reject(new Error(event.data.error))
     }
-    worker.onerror = () => { cleanup(); reject(new Error('Не удалось запустить обработку GEDCOM. Текущий черновик не изменён.')) }
+    worker.onerror = () => { cleanup(); reject(new Error('Не удалось запустить обработку GEDCOM. Текущее дерево не изменено.')) }
     worker.postMessage(request, request.operation === 'import' ? [request.bytes] : [])
   })
 }
@@ -23,12 +24,8 @@ export async function readGedcom(file: File): Promise<TreeDocument> {
   return result.tree
 }
 
+/** Exports in a Worker and downloads `<title>.ged`. */
 export async function writeGedcom(tree: TreeDocument): Promise<void> {
   const result = await runWorker<{ text: string }>({ operation: 'export', tree })
-  const url = URL.createObjectURL(new Blob([result.text], { type: 'text/plain;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = (tree.gedcom?.fileName ?? 'family.ged').replace(/\.ged$/i, '') + '-edited.ged'
-  anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  downloadFile(result.text, `${safeFileName(tree.title)}.ged`, 'text/plain;charset=utf-8')
 }

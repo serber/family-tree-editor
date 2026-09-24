@@ -1,82 +1,270 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
-test('edits a person, undoes/redoes, and restores the local draft', async ({ page }) => {
+function trackErrors(page: Page) {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+  return errors
+}
+
+const panel = (page: Page) => page.getByRole('complementary', { name: 'Карточка человека' })
+const field = (page: Page, name: string) => panel(page).locator(`[name="${name}"]`)
+
+async function startNewTree(page: Page) {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
-  await page.getByRole('button', { name: 'К первой карточке' }).click()
-  const panel = page.getByRole('complementary', { name: 'Карточка человека' })
-  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Александр')
-  await panel.getByLabel('Имя', { exact: true }).fill('Тестовое имя')
-  await panel.getByRole('button', { name: 'Применить изменения' }).click()
-  await expect(panel.getByRole('heading', { name: 'Тестовое имя Леснов' })).toBeVisible()
-  await page.getByRole('button', { name: 'Отменить изменение', exact: true }).click()
-  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Александр')
-  await page.getByRole('button', { name: 'Повторить изменение', exact: true }).click()
-  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Тестовое имя')
+  await page.getByRole('button', { name: /Начать новое дерево/ }).click()
+  await expect(field(page, 'givenName')).toBeFocused()
+}
+
+test('enters a family from scratch with suggestions, keyboard shortcuts, undo/redo, and reload', async ({ page }) => {
+  const errors = trackErrors(page)
+  await startNewTree(page)
+  await page.keyboard.type('Иван')
+  await field(page, 'patronymic').fill('Петрович')
+  await field(page, 'surname').fill('Сидоров')
+  await panel(page).getByRole('button', { name: 'Мужской' }).click()
+  await field(page, 'birthDate').fill('ок. 1920')
+  await expect(panel(page).getByText('→ ок. 1920')).toBeVisible()
+  await field(page, 'birthPlace').fill('Тверь')
+  await field(page, 'birthPlace').press('Enter')
+
+  // Add father from the card: name and surname are suggested from the patronymic.
+  await page.locator('.react-flow__node-person').first().getByRole('button', { name: /Отец/ }).click()
+  await expect(field(page, 'givenName')).toHaveValue('Пётр')
+  await expect(field(page, 'surname')).toHaveValue('Сидоров')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Alt+ArrowLeft')
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Сидоров Иван Петрович')
+
+  // Wife and daughter via keyboard (physical keys of П and Д in the Russian layout).
+  await page.keyboard.press('KeyG')
+  await expect(field(page, 'surname')).toHaveValue('Сидорова')
+  await page.keyboard.type('Анна')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Alt+ArrowLeft')
+  await page.keyboard.press('KeyL')
+  await expect(field(page, 'patronymic')).toHaveValue('Ивановна')
+  await expect(field(page, 'surname')).toHaveValue('Сидорова')
+  await page.keyboard.type('Ольга')
+  await page.keyboard.press('Escape')
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Сидорова Ольга Ивановна')
+  await expect(panel(page).getByText('дочь Ивана и Анны')).toBeVisible()
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(4)
+
+  // Undo removes the typed name and then the daughter as separate steps; redo restores both.
+  await page.keyboard.press('Control+z')
+  await expect(field(page, 'givenName')).toHaveValue('')
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(3)
+  await page.keyboard.press('Control+Shift+z')
+  await page.keyboard.press('Control+Shift+z')
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(4)
+
   await expect(page.getByTestId('save-status')).toContainText('Сохранено')
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
-  await expect(page.getByTestId('layout-time')).toContainText('Расположение восстановлено')
-  await page.getByLabel('Поиск человека').fill('I0001')
-  await page.getByRole('button', { name: /Тестовое имя Леснов/ }).click()
-  await expect(panel.getByLabel('Имя', { exact: true })).toHaveValue('Тестовое имя')
-  await expect(page.locator('.canvas-controls')).toContainText('100%')
-  await expect(page.locator('.react-flow__node-person[data-id="I0001"]')).toBeInViewport()
-  await expect(page.getByTestId('save-status')).toContainText('Сохранено')
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(4)
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('ольга')
+  await page.keyboard.press('Enter')
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Сидорова Ольга Ивановна')
+  await expect(field(page, 'givenName')).not.toBeFocused()
   expect(errors).toEqual([])
-  await page.screenshot({ path: 'test-results/editor-card.png' })
+  await page.screenshot({ path: 'test-results/editor-family.png' })
 })
 
-test('loads all 3000 people and navigates to the last person', async ({ page }, testInfo) => {
-  const errors: string[] = []
-  page.on('pageerror', (error) => errors.push(error.message))
-  page.on('dialog', (dialog) => dialog.accept())
+test('links an existing person as a parent, refuses cycles, and undoes a deletion from the toast', async ({ page }) => {
+  const errors = trackErrors(page)
+  await startNewTree(page)
+  await page.keyboard.type('Дочь')
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Найти человека' }).click()
+  await page.getByRole('option', { name: /Добавить человека без связей/ }).click()
+  await page.keyboard.type('Отец')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('Дочь')
+  await page.keyboard.press('Enter')
+  await panel(page).getByRole('button', { name: 'Выбрать из дерева' }).first().click()
+  await page.getByRole('dialog', { name: /Выберите родителя/ }).getByRole('combobox').fill('Отец')
+  await page.keyboard.press('Enter')
+  await expect(panel(page).locator('.relative-row').filter({ hasText: 'Отец' })).toBeVisible()
+
+  // The daughter cannot be chosen as her father's parent.
+  await panel(page).locator('.relative-row').filter({ hasText: 'Отец' }).getByRole('button', { name: /Отец/ }).click()
+  await panel(page).getByRole('button', { name: 'Выбрать из дерева' }).first().click()
+  await page.getByRole('combobox', { name: 'Поиск' }).fill('Дочь')
+  await expect(page.getByText('Никого не нашли')).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  await panel(page).getByRole('button', { name: 'Удалить', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'удалён' })).toBeVisible()
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(1)
+  await page.locator('.toast').getByRole('button', { name: 'Отменить' }).click()
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(2)
+  expect(errors).toEqual([])
+})
+
+test('loads 3,000 people, finds and edits the last person without relayout, and records timings', async ({ page }, testInfo) => {
+  const errors = trackErrors(page)
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
+  await page.getByRole('button', { name: /Посмотреть на примере/ }).click()
+  await expect(page.locator('.canvas-stats')).toContainText('100 чел.')
+  await page.getByRole('button', { name: 'Файл' }).click()
   const started = Date.now()
-  await page.getByLabel('Демонстрационное дерево').selectOption('3000')
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByTestId('save-status')).toContainText('Сохранено', { timeout: 30_000 })
+  await page.getByRole('menuitem', { name: 'Демо: 3 000 человек' }).click()
+  await expect(page.locator('.canvas-stats')).toContainText('3 000 чел.', { timeout: 60_000 })
+  await expect(page.locator('.canvas-stats')).toContainText('раскладка')
   const readyMs = Date.now() - started
-  const layout = await page.getByTestId('layout-time').textContent()
-  await page.getByLabel('Поиск человека').fill('I3000')
-  await page.getByRole('button', { name: /I3000/ }).click()
-  const panel = page.getByRole('complementary', { name: 'Карточка человека' })
-  await expect(panel).toContainText('I3000')
-  await expect(page.locator('.canvas-controls')).toContainText('100%')
+  const stats = await page.locator('.canvas-stats').textContent()
+
+  const searchStart = Date.now()
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('I3000')
+  await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__node-person[data-id="I3000"]')).toBeInViewport()
-  await panel.getByLabel('Заметка').fill('Последняя карточка тоже редактируется')
-  await panel.getByRole('button', { name: 'Применить изменения' }).click()
-  await expect(page.getByTestId('save-status')).toContainText('Сохранено')
-  await expect(page.getByTestId('layout-time')).toHaveText(layout!)
-  await page.getByRole('button', { name: 'Всё дерево' }).click()
-  await expect(page.locator('.react-flow__node-person')).toHaveCount(3000, { timeout: 30_000 })
-  const metrics = { browser: await page.evaluate(() => navigator.userAgent), readyMs, layout, visibleCards: await page.locator('.react-flow__node-person').count() }
+  const searchMs = Date.now() - searchStart
+
+  // Keystroke-to-paint latency in the name field (includes React render of the card and inspector).
+  const keystrokes = await page.evaluate(async () => {
+    const input = document.querySelector<HTMLInputElement>('[name="givenName"]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    const samples: number[] = []
+    for (const text of ['Т', 'Те', 'Тес', 'Тест', 'Тесто', 'Тестов', 'Тестовы', 'Тестовый']) {
+      const start = performance.now()
+      setter.call(input, text)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      samples.push(performance.now() - start)
+    }
+    return samples
+  })
+  await expect(page.locator('.react-flow__node-person[data-id="I3000"]')).toContainText('Тестовый')
+  await expect(page.locator('.canvas-stats')).toHaveText(stats!)
+
+  const selectStart = Date.now()
+  await page.locator('.react-flow__node-person').filter({ hasNotText: 'Тестовый' }).first().click()
+  await expect(panel(page).getByRole('heading', { level: 2 })).not.toContainText('Тестовый')
+  const selectMs = Date.now() - selectStart
+
+  await page.keyboard.press('Digit0')
+  await expect(page.locator('.canvas-controls .zoom-value')).not.toHaveText('90%')
+  const metrics = {
+    browser: await page.evaluate(() => navigator.userAgent), readyMs, stats, searchMs, selectMs,
+    keystrokeMs: { median: [...keystrokes].sort((a, b) => a - b)[4], max: Math.max(...keystrokes), samples: keystrokes.map((value) => Math.round(value)) },
+  }
   await testInfo.attach('large-tree-metrics', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' })
   console.log(JSON.stringify(metrics))
   expect(errors).toEqual([])
   await page.screenshot({ path: 'test-results/tree-3000.png' })
 })
 
-test('guards unsaved form edits and supports downloading/restoring a draft', async ({ page }) => {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
-  await page.getByRole('button', { name: 'К первой карточке' }).click()
-  await page.getByLabel('Имя', { exact: true }).fill('Неприменённое имя')
-  page.once('dialog', (dialog) => dialog.dismiss())
-  await page.getByRole('button', { name: 'Закрыть карточку' }).click()
-  await expect(page.getByLabel('Имя', { exact: true })).toHaveValue('Неприменённое имя')
-  await page.getByRole('button', { name: 'Применить изменения' }).click()
-  await page.getByLabel('Меню черновика').click()
+test('asks before replacing unsaved work, restores a downloaded backup and an automatic version', async ({ page }) => {
+  await startNewTree(page)
+  await page.keyboard.type('Резервный')
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('save-status')).toContainText('Сохранено в браузере')
+
+  // Unsaved work: replacing it asks first, and cancelling keeps it.
+  await page.getByRole('button', { name: 'Файл' }).click()
+  await page.getByRole('menuitem', { name: 'Демо: 100 человек' }).click()
+  await page.getByRole('button', { name: 'Отмена' }).click()
+  await expect(page.locator('.canvas-stats')).toContainText('1 чел.')
+
+  await page.getByRole('button', { name: 'Файл' }).click()
   const downloaded = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Скачать копию' }).click()
-  const file = await downloaded
-  const path = await file.path()
-  page.on('dialog', (dialog) => dialog.accept())
-  await page.locator('input[accept=".json,application/json"]').setInputFiles(path!)
-  await expect(page.getByRole('button', { name: 'Всё дерево' })).toBeVisible()
-  await page.getByRole('button', { name: 'К первой карточке' }).click()
-  await expect(page.getByLabel('Имя', { exact: true })).toHaveValue('Неприменённое имя')
+  await page.getByRole('menuitem', { name: 'Скачать резервную копию' }).click()
+  const path = await (await downloaded).path()
+  await expect(page.getByTestId('save-status')).toContainText('выгружено')
+
+  // After a download there is nothing to lose, so no confirmation is needed.
+  await page.getByRole('button', { name: 'Файл' }).click()
+  await page.getByRole('menuitem', { name: 'Демо: 100 человек' }).click()
+  await expect(page.locator('.canvas-stats')).toContainText('100 чел.')
+
+  await page.getByTestId('backup-input').setInputFiles(path!)
+  await expect(page.locator('.canvas-stats')).toContainText('1 чел.')
+  await expect(page.locator('.react-flow__node-person')).toContainText('Резервный')
+  await page.getByRole('button', { name: 'Файл' }).click()
+  await page.getByRole('menuitem', { name: 'Автосохранённые версии…' }).click()
+  await page.getByRole('dialog', { name: 'Автосохранённые версии' }).getByRole('button', { name: /100 чел\./ }).first().click()
+  await expect(page.locator('.canvas-stats')).toContainText('100 чел.')
+})
+
+test('flags a person entered twice and merges the duplicates from the checks view', async ({ page }) => {
+  const errors = trackErrors(page)
+  await startNewTree(page)
+  await page.keyboard.type('Пётр')
+  await field(page, 'surname').fill('Орлов')
+  await field(page, 'surname').press('Enter')
+  await page.keyboard.press('KeyC')
+  await page.keyboard.type('Сын')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Control+k')
+  await page.getByRole('option', { name: /Добавить человека без связей/ }).click()
+  await page.keyboard.type('Пётр')
+  await field(page, 'surname').fill('Орлов')
+  await field(page, 'deathPlace').fill('Тверь')
+  await field(page, 'deathPlace').press('Enter')
+  await page.getByRole('button', { name: /Замечания/ }).click()
+  await expect(page.getByText('Возможный дубликат')).toBeVisible()
+  await page.getByRole('button', { name: 'Объединить', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Объединить' }).click()
+  await expect(page.getByText('Возможный дубликат')).toHaveCount(0)
+  await page.getByRole('button', { name: /Дерево/ }).click()
+  await expect(page.locator('.react-flow__node-person')).toHaveCount(2)
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('Орлов Пётр')
+  await page.keyboard.press('Enter')
+  await expect(field(page, 'deathPlace')).toHaveValue('Тверь')
+  await expect(panel(page).locator('.relative-row').filter({ hasText: 'Сын' })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('review mode marks people without moving the selection, persists, and never changes the GEDCOM', async ({ page }) => {
+  const errors = trackErrors(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: /Посмотреть на примере/ }).click()
+  await expect(page.locator('.canvas-stats')).toContainText('100 чел.')
+  const exportText = async () => {
+    const download = page.waitForEvent('download')
+    await page.keyboard.press('Control+s')
+    const { readFileSync } = await import('node:fs')
+    return readFileSync((await (await download).path())!, 'utf8')
+  }
+  const before = await exportText()
+
+  await page.getByRole('button', { name: /Режим проверки/ }).click()
+  await expect(page.getByTestId('review-progress')).toHaveText('0 из 100')
+  await expect(page.locator('.person-card.is-unverified').first()).toBeVisible()
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Леснов Александр')
+  await page.keyboard.press('Space')
+  await expect(page.getByTestId('review-progress')).toHaveText('1 из 100')
+  await expect(page.locator('.react-flow__node-person[data-id="I1"] .person-card')).toHaveClass(/is-verified/)
+  await expect(panel(page).locator('.verify-bar.ok')).toContainText('Проверен')
+
+  // Marking never moves the selection; moving to the next unchecked person is a separate, explicit action.
+  await panel(page).getByRole('button', { name: /Следующий/ }).click()
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Леснова Анна')
+  await page.keyboard.press('Space')
+  await expect(page.getByTestId('review-progress')).toHaveText('2 из 100')
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Леснова Анна')
+  await page.keyboard.press('Space')
+  await expect(page.getByTestId('review-progress')).toHaveText('1 из 100')
+  await panel(page).getByRole('button', { name: 'Проверено' }).click()
+  await expect(page.getByTestId('review-progress')).toHaveText('2 из 100')
+  await expect(panel(page).getByRole('heading', { level: 2 })).toHaveText('Леснова Анна')
+  await page.keyboard.press('Control+z')
+  await expect(page.getByTestId('review-progress')).toHaveText('1 из 100')
+  await page.keyboard.press('Control+Shift+z')
+  await expect(page.getByTestId('review-progress')).toHaveText('2 из 100')
+
+  await expect(page.getByTestId('save-status')).toContainText('Сохранено')
+  await page.reload()
+  await expect(page.getByTestId('review-progress')).toHaveText('2 из 100')
+  await page.getByRole('button', { name: /Таблица/ }).click()
+  await page.getByLabel('Статус проверки').selectOption('todo')
+  await expect(page.locator('.view-toolbar .count')).toHaveText('98 из 100')
+  await page.getByRole('button', { name: /Дерево/ }).click()
+  expect(await exportText()).toBe(before)
+  expect(errors).toEqual([])
 })

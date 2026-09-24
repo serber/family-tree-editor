@@ -1,10 +1,10 @@
-import { layoutTree } from './layout'
-import type { TreeDocument } from '../model/tree'
+import { layoutTree, type LayoutInput } from './layout'
 
-self.onmessage = (event: MessageEvent<TreeDocument>) => {
+self.onmessage = (event: MessageEvent<{ requestId: number; input: LayoutInput }>) => {
+  const { requestId, input } = event.data
   try {
-    self.postMessage({ ok: true, ...layoutTree(event.data) })
+    self.postMessage({ requestId, ok: true, ...layoutTree(input) })
   } catch (error) {
-    self.postMessage({ ok: false, error: error instanceof Error ? error.message : 'Не удалось разместить дерево.' })
+    self.postMessage({ requestId, ok: false, error: error instanceof Error ? error.message : 'Не удалось разместить дерево.' })
   }
 }
